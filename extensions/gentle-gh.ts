@@ -50,8 +50,8 @@ function ensureRuntime(ctx: ExtensionContext): GhRuntime {
 		store: new GhStore({
 			now: () => Date.now(),
 			resolveRepo: () => source.resolveRepo(),
-			loadPullRequests: (repo) => source.loadPullRequests(repo),
-			loadIssues: (repo) => source.loadIssues(repo),
+			loadPullRequests: (repo, state) => source.loadPullRequests(repo, state),
+			loadIssues: (repo, state) => source.loadIssues(repo, state),
 			// The rail memo cannot see a snapshot it never read: every applied
 			// result bumps the revision so the section repaints.
 			onChange: () => {
@@ -77,7 +77,9 @@ function mountSection(current: GhRuntime, ctx: ExtensionContext): void {
 				{ render: () => [], invalidate() {}, dispose() {} },
 				new GithubRail({
 					theme,
-					snapshot: () => current.store.snapshot(),
+					// The pinned open snapshot, not the overlay's: the section keeps counting
+					// open work whatever filter the pane is showing.
+					openSnapshot: () => current.store.openSnapshot(),
 					now: () => Date.now(),
 					open: () => openOverlay(current.ctx),
 				}),
@@ -119,6 +121,15 @@ async function showOverlay(current: GhRuntime): Promise<void> {
 					refresh: () => {
 						void current.store
 							.refresh(true)
+							.then(() => view?.update())
+							.catch(() => {});
+					},
+					// The store answers a tab's state change with a real fetch of that list and
+					// a new version, so the repaint waits for that answer instead of guessing
+					// its rows.
+					cycleState: (kind) => {
+						void current.store
+							.cycleState(kind)
 							.then(() => view?.update())
 							.catch(() => {});
 					},
@@ -171,7 +182,7 @@ function openOverlay(ctx: ExtensionContext): void {
 
 export default function gentleGh(pi: ExtensionAPI): void {
 	pi.registerCommand(COMMAND_NAME, {
-		description: "Browse this repository's open pull requests and issues. Press o to open one in the browser.",
+		description: "Browse this repository's pull requests and issues. Tab switches lists, o opens one in the browser, s switches the active list's state.",
 		handler: async (_args, ctx) => openOverlay(ctx),
 	});
 

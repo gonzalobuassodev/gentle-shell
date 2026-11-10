@@ -61,11 +61,11 @@ test("no origin, or a host that is not GitHub, never asks gh anything", async ()
 test("a failing gh becomes the tool's own stderr, trimmed, or a readable fallback", async () => {
 	const failing = sourceWith({ remote: REMOTE, exec: async () => failed("  gh: not authenticated; run gh auth login\n\n") });
 	const shape = (message: string) => (error: unknown) => error instanceof Error && error.message === message;
-	await assert.rejects(failing.loadPullRequests(REPO), shape("gh: not authenticated; run gh auth login"));
-	await assert.rejects(failing.loadIssues(REPO), shape("gh: not authenticated; run gh auth login"));
+	await assert.rejects(failing.loadPullRequests(REPO, "open"), shape("gh: not authenticated; run gh auth login"));
+	await assert.rejects(failing.loadIssues(REPO, "open"), shape("gh: not authenticated; run gh auth login"));
 
 	const silent = sourceWith({ remote: REMOTE, exec: async () => failed("   \n") });
-	await assert.rejects(silent.loadPullRequests(REPO), shape(GH_FAILED));
+	await assert.rejects(silent.loadPullRequests(REPO, "open"), shape(GH_FAILED));
 });
 
 test("both lists are gh's stdout for the open work of that repository, parsed", async () => {
@@ -77,7 +77,7 @@ test("both lists are gh's stdout for the open work of that repository, parsed", 
 	const source = sourceWith({ remote: REMOTE, exec });
 
 	assert.equal(repoFullName(REPO), "Gentleman-Programming/gentle-shell");
-	assert.deepEqual(await source.loadPullRequests(REPO), [
+	assert.deepEqual(await source.loadPullRequests(REPO, "open"), [
 		{
 			number: 42,
 			title: "Add the GitHub pane",
@@ -90,14 +90,45 @@ test("both lists are gh's stdout for the open work of that repository, parsed", 
 			reviewDecision: null,
 		},
 	]);
-	assert.deepEqual(await source.loadIssues(REPO), [
+	assert.deepEqual(await source.loadIssues(REPO, "open"), [
 		{ number: 3076, title: "GitHub pane", author: "someone", labels: [], commentCount: 2, updatedAt: "2026-11-10T08:00:00Z" },
 	]);
 	// Argument vectors, not a command line: nothing is quoted or reinterpreted.
 	assert.deepEqual(calls, [
-		{ args: prListArgs(REPO), cwd: "/repo" },
-		{ args: issueListArgs(REPO), cwd: "/repo" },
+		{ args: prListArgs(REPO, "open"), cwd: "/repo" },
+		{ args: issueListArgs(REPO, "open"), cwd: "/repo" },
 	]);
+});
+
+test("a tab's state reaches the listing it belongs to, and never the other one", async () => {
+	const calls: string[][] = [];
+	const exec: GhExec = async (args) => {
+		calls.push(args);
+		return ok("[]");
+	};
+	const source = sourceWith({ remote: REMOTE, exec });
+	await source.loadPullRequests(REPO, "merged");
+	await source.loadIssues(REPO, "all");
+	const stateOf = (args: string[]) => args[args.indexOf("--state") + 1];
+	assert.equal(stateOf(calls[0]!), "merged");
+	assert.equal(stateOf(calls[1]!), "all");
+	assert.equal(calls[0]![0], "pr", "merged is a pull request question");
+	assert.equal(calls[1]![0], "issue");
+});
+
+test("the issue listing is only ever asked for a state gh accepts for issues", async () => {
+	const calls: string[][] = [];
+	const exec: GhExec = async (args) => {
+		calls.push(args);
+		return ok("[]");
+	};
+	const source = sourceWith({ remote: REMOTE, exec });
+	for (const state of ["open", "closed", "all"] as const) await source.loadIssues(REPO, state);
+	assert.deepEqual(calls.map((args) => args[args.indexOf("--state") + 1]), ["open", "closed", "all"]);
+	for (const args of calls) {
+		assert.equal(args[0], "issue");
+		assert.ok(!args.includes("merged"), "gh rejects --state merged for issues");
+	}
 });
 
 // The pane is read-only against GitHub (S6). The argument vectors are pinned
@@ -105,15 +136,15 @@ test("both lists are gh's stdout for the open work of that repository, parsed", 
 // layer could ever write, so an argument-level assertion is the real boundary.
 const WRITE_CAPABLE = ["merge", "close", "create", "edit", "delete", "comment", "review", "reopen", "ready", "api", "--method", "--input", "-X"];
 
-test("the only gh arguments the pane builds are the two open listings", () => {
+test("the only gh arguments the pane builds are the two listings, in any filter", () => {
 	const vectors = [
-		{ args: prListArgs(REPO), kind: "pr" },
-		{ args: issueListArgs(REPO), kind: "issue" },
+		...(["open", "closed", "merged", "all"] as const).map((state) => ({ args: prListArgs(REPO, state), kind: "pr", state })),
+		...(["open", "closed", "all"] as const).map((state) => ({ args: issueListArgs(REPO, state), kind: "issue", state })),
 	];
-	for (const { args, kind } of vectors) {
+	for (const { args, kind, state } of vectors) {
 		assert.equal(args[0], kind);
 		assert.equal(args[1], "list", "a listing is the only verb");
-		assert.equal(args[args.indexOf("--state") + 1], "open");
+		assert.equal(args[args.indexOf("--state") + 1], state);
 		assert.equal(args[args.length - 2], "--json");
 		// Exactly one --repo, and it is the resolved repository, never a bare flag.
 		assert.equal(args.filter((arg) => arg === "--repo").length, 1);
@@ -136,8 +167,8 @@ test("a repository whose name contains shell metacharacters stays one --repo arg
 	};
 	// No shell is involved, so the metacharacters are only bytes in one argument.
 	const source = createGhDataSource({ cwd: "/repo", gitRemote: () => "git@github.com:acme/repo.git", exec });
-	await source.loadPullRequests(hostile);
-	await source.loadIssues(hostile);
+	await source.loadPullRequests(hostile, "open");
+	await source.loadIssues(hostile, "open");
 
 	assert.equal(calls.length, 2);
 	for (const args of calls) {

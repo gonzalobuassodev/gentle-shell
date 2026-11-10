@@ -10,7 +10,9 @@ import {
 	parsePullRequests,
 	parseRepoFromRemote,
 	prListArgs,
+	type GhStateFilter,
 	type GithubRepo,
+	type IssueStateFilter,
 	type IssueSummary,
 	type PullRequestSummary,
 } from "./gh-client.ts";
@@ -37,8 +39,8 @@ export interface GhExecDeps {
 
 export interface GhDataSource {
 	resolveRepo(): GithubRepo | null;
-	loadPullRequests(repo: GithubRepo): Promise<PullRequestSummary[]>;
-	loadIssues(repo: GithubRepo): Promise<IssueSummary[]>;
+	loadPullRequests(repo: GithubRepo, state: GhStateFilter): Promise<PullRequestSummary[]>;
+	loadIssues(repo: GithubRepo, state: IssueStateFilter): Promise<IssueSummary[]>;
 }
 
 /** What a silent non-zero exit says instead: a missing `gh` writes nothing to stderr. */
@@ -90,11 +92,11 @@ export function createGhDataSource(deps: GhExecDeps): GhDataSource {
 			const url = remote();
 			return url === undefined ? null : parseRepoFromRemote(url);
 		},
-		async loadPullRequests(repo) {
-			return parsePullRequests(await list(prListArgs(repo)));
+		async loadPullRequests(repo, state) {
+			return parsePullRequests(await list(prListArgs(repo, state)));
 		},
-		async loadIssues(repo) {
-			return parseIssues(await list(issueListArgs(repo)));
+		async loadIssues(repo, state) {
+			return parseIssues(await list(issueListArgs(repo, state)));
 		},
 	};
 }
