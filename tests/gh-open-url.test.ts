@@ -62,3 +62,39 @@ test("a failing opener is reported, never thrown", async () => {
 	assert.deepEqual(await openGithubUrl(PR_URL, { platform: "linux", spawn: fake.spawn }), { opened: false, error: "spawn xdg-open ENOENT" });
 	assert.deepEqual(fake.calls, [{ command: "xdg-open", args: [PR_URL], options: OPTIONS }]);
 });
+
+// Every shape below is a URL a hostile or careless caller could hand over: a
+// query or fragment that reinterprets the page, a lookalike host, a traversal, a
+// scheme that is not https, a padded number, stray whitespace or a trailing
+// newline, a second slash, a port, and a backslash that some parsers treat as a
+// separator. None of them is an issue or pull request page, so none may spawn.
+const HOSTILE_URLS = [
+	"https://github.com/o/r/pull/1?x=1",
+	"https://github.com/o/r/pull/1#frag",
+	"https://github.com.evil.com/o/r/pull/1",
+	"https://github.com/o/r/pull/../settings",
+	"javascript:alert(1)",
+	"https://github.com/o/r/pull/0001",
+	"https://github.com/o/r/pull/1\n",
+	" https://github.com/o/r/pull/1",
+	"https://github.com/o/r/pull/1/",
+	"https://GitHub.com/o/r/pull/1",
+	"https://github.com/o/r/pull/1\r",
+	"https://github.com/o/r/pull//1",
+	"https://github.com:443/o/r/pull/1",
+	"https://github.com\\@evil.com/o/r/pull/1",
+];
+
+test("hostile URL shapes are refused before any program runs", async () => {
+	assert.equal(HOSTILE_URLS.length, 14);
+	const fake = fakeSpawn();
+	for (const url of HOSTILE_URLS) {
+		assert.equal(isGithubItemUrl(url), false, `must refuse: ${JSON.stringify(url)}`);
+		assert.deepEqual(await openGithubUrl(url, { platform: "darwin", spawn: fake.spawn }), {
+			opened: false,
+			error: "only github.com pull request and issue pages can be opened",
+		});
+	}
+	assert.deepEqual(fake.calls, []);
+	assert.equal(fake.unrefs(), 0);
+});

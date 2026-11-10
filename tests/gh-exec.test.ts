@@ -99,3 +99,50 @@ test("both lists are gh's stdout for the open work of that repository, parsed", 
 		{ args: issueListArgs(REPO), cwd: "/repo" },
 	]);
 });
+
+// The pane is read-only against GitHub (S6). The argument vectors are pinned
+// here rather than trusted: a new flag or a new subcommand is the only way this
+// layer could ever write, so an argument-level assertion is the real boundary.
+const WRITE_CAPABLE = ["merge", "close", "create", "edit", "delete", "comment", "review", "reopen", "ready", "api", "--method", "--input", "-X"];
+
+test("the only gh arguments the pane builds are the two open listings", () => {
+	const vectors = [
+		{ args: prListArgs(REPO), kind: "pr" },
+		{ args: issueListArgs(REPO), kind: "issue" },
+	];
+	for (const { args, kind } of vectors) {
+		assert.equal(args[0], kind);
+		assert.equal(args[1], "list", "a listing is the only verb");
+		assert.equal(args[args.indexOf("--state") + 1], "open");
+		assert.equal(args[args.length - 2], "--json");
+		// Exactly one --repo, and it is the resolved repository, never a bare flag.
+		assert.equal(args.filter((arg) => arg === "--repo").length, 1);
+		assert.equal(args[args.indexOf("--repo") + 1], repoFullName(REPO));
+		for (const arg of args) {
+			// `comments` and `reviewDecision` are JSON field names, not verbs: the
+			// check is an exact token match so a data field can never pass as one.
+			assert.ok(!WRITE_CAPABLE.includes(arg), `${JSON.stringify(arg)} can write to GitHub`);
+			assert.ok(!arg.startsWith("--method=") && !arg.startsWith("--input="), `${JSON.stringify(arg)} can write to GitHub`);
+		}
+	}
+});
+
+test("a repository whose name contains shell metacharacters stays one --repo argument", async () => {
+	const hostile: GithubRepo = { host: "github.com", owner: "acme; rm -rf ~", name: "$(whoami)|`id`" };
+	const calls: string[][] = [];
+	const exec: GhExec = async (args) => {
+		calls.push(args);
+		return ok("[]");
+	};
+	// No shell is involved, so the metacharacters are only bytes in one argument.
+	const source = createGhDataSource({ cwd: "/repo", gitRemote: () => "git@github.com:acme/repo.git", exec });
+	await source.loadPullRequests(hostile);
+	await source.loadIssues(hostile);
+
+	assert.equal(calls.length, 2);
+	for (const args of calls) {
+		assert.equal(args.filter((arg) => arg === "--repo").length, 1);
+		assert.equal(args[args.indexOf("--repo") + 1], `${hostile.owner}/${hostile.name}`);
+		assert.ok(!args.some((arg) => arg === "rm" || arg === "-rf"), "no metacharacter became its own argument");
+	}
+});

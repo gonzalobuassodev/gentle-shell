@@ -28,6 +28,11 @@ interface GhRuntime {
 }
 
 let runtime: GhRuntime | undefined;
+// Pi does not close an open overlay when its command runs again, so without this
+// a second `/gentle:gh` mounts a second pane, a second ticker and a second view
+// that nothing ever disposes. Set synchronously by showOverlay and cleared by the
+// same `finally` that clears the ticker.
+let overlayOpen = false;
 
 // One runtime per session directory: a resumed session elsewhere resolves a
 // different origin remote, and the previous store's pending load must not land
@@ -87,12 +92,15 @@ function mountSection(current: GhRuntime, ctx: ExtensionContext): void {
 // keyboard.
 async function showOverlay(current: GhRuntime): Promise<void> {
 	const ctx = current.ctx;
+	// Before the first await: openOverlay must see the guard during the initial
+	// load, not only once the overlay has mounted.
+	overlayOpen = true;
 	let view: GhView | undefined;
 	let ticker: ReturnType<typeof setInterval> | undefined;
-	// The pane opens on data, not on a spinner: the first load lands before the
-	// view asks the store for a snapshot.
-	await current.store.refresh();
 	try {
+		// The pane opens on data, not on a spinner: the first load lands before the
+		// view asks the store for a snapshot.
+		await current.store.refresh();
 		await ctx.ui.custom<null>(
 			(tui, theme, _keybindings, done) => {
 				const close = withOverlayRepaint(tui, done);
@@ -145,6 +153,7 @@ async function showOverlay(current: GhRuntime): Promise<void> {
 		if (ticker) clearInterval(ticker);
 		view?.dispose();
 		view = undefined;
+		overlayOpen = false;
 	}
 }
 
@@ -153,6 +162,9 @@ function openOverlay(ctx: ExtensionContext): void {
 		if (ctx.hasUI) ctx.ui.notify(NO_TERMINAL, "warning");
 		return;
 	}
+	// A second command while one is opening or open is a no-op: the pane already
+	// on screen is that request, and a second store/ticker pair would leak.
+	if (overlayOpen) return;
 	const current = ensureRuntime(ctx);
 	void showOverlay(current).catch((error) => ctx.ui.notify(error instanceof Error ? error.message : String(error), "warning"));
 }
