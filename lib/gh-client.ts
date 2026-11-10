@@ -12,6 +12,8 @@ export interface PullRequestSummary {
 	number: number;
 	title: string;
 	author: string;
+	/** The description as gh hands it over; `""` for an empty one. */
+	body: string;
 	isDraft: boolean;
 	headRefName: string;
 	updatedAt: string;
@@ -24,6 +26,8 @@ export interface IssueSummary {
 	number: number;
 	title: string;
 	author: string;
+	/** The description as gh hands it over; `""` for an empty one. */
+	body: string;
 	labels: string[];
 	commentCount: number;
 	updatedAt: string;
@@ -56,8 +60,9 @@ const PR_FIELDS = [
 	"labels",
 	"comments",
 	"reviewDecision",
+	"body",
 ] as const;
-const ISSUE_FIELDS = ["number", "title", "author", "labels", "comments", "updatedAt"] as const;
+const ISSUE_FIELDS = ["number", "title", "author", "labels", "comments", "updatedAt", "body"] as const;
 
 const GIT_SUFFIX = /\.git$/;
 const URL_REMOTE = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/\s]+@)?(?<host>[^:/\s]+)(?::\d+)?\/(?<path>.*)$/i;
@@ -132,6 +137,7 @@ export function parsePullRequests(json: string): PullRequestSummary[] {
 			number: numberField(record, "pull requests"),
 			title: stringField(record, "title") ?? "",
 			author: authorOf(record),
+			body: stringField(record, "body") ?? "",
 			isDraft: record.isDraft === true,
 			headRefName: stringField(record, "headRefName") ?? "",
 			updatedAt: stringField(record, "updatedAt") ?? "",
@@ -149,6 +155,7 @@ export function parseIssues(json: string): IssueSummary[] {
 			number: numberField(record, "issues"),
 			title: stringField(record, "title") ?? "",
 			author: authorOf(record),
+			body: stringField(record, "body") ?? "",
 			labels: labelsOf(record),
 			commentCount: commentCountOf(record),
 			updatedAt: stringField(record, "updatedAt") ?? "",
@@ -190,7 +197,9 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
 }
 
 // `gh` serializes an absent author as null, and a deleted account really is a
-// nameless author; showing "ghost" is better than dropping the row.
+// nameless author; showing "ghost" is better than dropping the row. A null
+// description is the same kind of absence: gh reports an empty one as null, so
+// it means "" rather than a parse failure.
 function authorOf(record: Record<string, unknown>): string {
 	const author = record.author;
 	if (typeof author !== "object" || author === null) return UNKNOWN_AUTHOR;

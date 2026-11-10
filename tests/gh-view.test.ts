@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { GhView, PANE_SEPARATOR, ghEntries, ghItemUrl, ghViewLayout, type GhEntryKind, type GhViewDeps, type GhViewTheme } from "../lib/gh-view.ts";
+import { BODY_MAX_BYTES, BODY_MAX_LINES, BODY_TRUNCATED, GhView, PANE_SEPARATOR, ghBodyLines, ghEntries, ghItemUrl, ghViewLayout, type GhEntryKind, type GhViewDeps, type GhViewTheme } from "../lib/gh-view.ts";
 import type { GhSnapshot } from "../lib/gh-state.ts";
 import { nextIssueState, nextPrState, type GithubRepo, type IssueSummary, type PullRequestSummary } from "../lib/gh-client.ts";
 
@@ -30,6 +30,7 @@ function pull(number: number, title = `pull ${number}`, over: Partial<PullReques
 		number,
 		title,
 		author: "doblas",
+		body: "",
 		isDraft: false,
 		headRefName: `feat/${number}`,
 		updatedAt: "2026-11-10T09:00:00Z",
@@ -41,7 +42,7 @@ function pull(number: number, title = `pull ${number}`, over: Partial<PullReques
 }
 
 function issue(number: number, title = `issue ${number}`, over: Partial<IssueSummary> = {}): IssueSummary {
-	return { number, title, author: "someone", labels: [], commentCount: 0, updatedAt: "2026-11-10T09:00:00Z", ...over };
+	return { number, title, author: "someone", body: "", labels: [], commentCount: 0, updatedAt: "2026-11-10T09:00:00Z", ...over };
 }
 
 function snapshot(over: Partial<GhSnapshot> = {}): GhSnapshot {
@@ -95,6 +96,37 @@ const FULL = snapshot({
 	pullRequests: [pull(2841, "docs: state that donations go through GitHub Sponsors"), pull(2839, "feat(gh): add the pane")],
 	issues: [issue(2801, "[Bug]: accepting an invitation answers the previous company"), issue(2790, "[Feature]: tabs")],
 });
+
+// The detail column of every body row: the description is the only thing in the
+// pane that can be taller than the pane, so most of what a keystroke does is
+// read here, and the list side is deliberately ignored.
+function detailRows(rendered: string[]): string[] {
+	return rendered.slice(2, -1).map((row) => {
+		const at = row.indexOf(PANE_SEPARATOR);
+		return at < 0 ? "" : row.slice(at + PANE_SEPARATOR.length).trimEnd();
+	});
+}
+
+// Long enough to need scrolling at every height a test renders: a paragraph, a
+// blank line, an unbreakable token and more rows than any pane can hold.
+const LONG_BODY = [
+	"The pane has to hold a description that is taller than the pane itself,",
+	"",
+	`an unbreakable token: ${"x".repeat(200)}`,
+	"",
+	...Array.from({ length: 40 }, (_, index) => `row ${index + 1}`),
+].join("\n");
+
+function longSnapshot(): GhSnapshot {
+	return snapshot({
+		pullRequests: [pull(2841, "docs: state that donations go through GitHub Sponsors", { body: LONG_BODY }), pull(2839, "feat(gh): add the pane", { body: LONG_BODY })],
+		issues: [issue(2801, "[Bug]: accepting an invitation answers the previous company", { body: LONG_BODY })],
+	});
+}
+
+// The indicator the pane shows when the description does not fit: the exact
+// range it is showing, out of how many rows.
+const AT_TOP = /lines 1–\d+ of \d+/;
 
 test("each tab lists its own kind, and only its own kind", () => {
 	assert.deepEqual(
@@ -189,6 +221,117 @@ test("the detail pane follows the active tab's selection", () => {
 	assert.doesNotMatch(issues, /feat\/2841/);
 });
 
+test("the detail pane shows the description under the metadata, wrapped to its width", () => {
+	const body =
+		"The description has to reach the pane with every word it arrived with, wrapped rather than clipped at the pane's edge, and it has to keep going long enough to prove the wrapping on more than one row.";
+	const { view } = viewOf(snapshot({ pullRequests: [pull(7, "a title", { body })] }), 24);
+	const detail = detailRows(view.render(120));
+	const joined = detail.join(" ").replace(/\s+/g, " ");
+	assert.ok(joined.includes("every word it arrived with"), "the description is on screen");
+	assert.ok(joined.includes("more than one row."), "the end of the paragraph is rendered, not clipped away");
+	assert.ok(detail.filter((row) => row.length > 0 && body.includes(row)).length >= 2, "the paragraph is wrapped, not one clipped row");
+});
+
+test("an unbreakable token is hard-split instead of overflowing the pane", () => {
+	const token = "z".repeat(200);
+	const { lines } = ghBodyLines(token, 40);
+	assert.equal(lines.join(""), token, "every character survives the split");
+	for (const line of lines) assert.ok(visibleWidth(line) <= 40, `line wider than the pane: ${visibleWidth(line)}`);
+
+	const { view } = viewOf(snapshot({ pullRequests: [pull(7, "a title", { body: token })] }), 12);
+	for (const width of [80, 120]) {
+		for (const row of view.render(width)) assert.ok(visibleWidth(row) <= width, `over-wide row at ${width}: ${JSON.stringify(row)}`);
+	}
+});
+
+test("blank lines in the description stay paragraph breaks", () => {
+	const { view } = viewOf(snapshot({ pullRequests: [pull(7, "a title", { body: "first paragraph\n\nsecond paragraph" })] }));
+	const detail = detailRows(view.render(120));
+	const at = detail.indexOf("first paragraph");
+	assert.ok(at >= 0, "the first paragraph is on screen");
+	assert.equal(detail[at + 1], "", "the blank line keeps a row of its own");
+	assert.equal(detail[at + 2], "second paragraph");
+});
+
+test("a description past the cap is cut and says where the rest is", () => {
+	assert.equal(BODY_MAX_BYTES, 64 * 1024);
+	assert.equal(BODY_MAX_LINES, 1000);
+	assert.match(BODY_TRUNCATED, /browser/i, "the notice names where the full text is");
+
+	const byLines = Array.from({ length: BODY_MAX_LINES + 25 }, (_, index) => `row ${index}`).join("\n");
+	const clipped = ghBodyLines(byLines, 60);
+	assert.equal(clipped.truncated, true);
+	assert.equal(clipped.lines.length, BODY_MAX_LINES, "the cap is the last row kept");
+
+	const byBytes = ghBodyLines("é".repeat(BODY_MAX_BYTES), 60);
+	assert.equal(byBytes.truncated, true, "the byte cap bites before the line cap");
+
+	const short = ghBodyLines("a description", 60);
+	assert.equal(short.truncated, false);
+	assert.deepEqual(short.lines, ["a description"]);
+
+	// The notice is not just computed, it is what the pane shows at the end.
+	const { view } = viewOf(snapshot({ pullRequests: [pull(7, "a title", { body: byLines })] }), 12);
+	view.render(120);
+	for (let press = 0; press < 200; press += 1) view.handleInput("\u001b[6~");
+	assert.equal(detailRows(view.render(120)).at(-1), BODY_TRUNCATED);
+});
+
+test("a description that fits shows no scroll indicator, a taller one says which lines are on screen", () => {
+	const short = viewOf(snapshot({ pullRequests: [pull(7, "a title", { body: "a short description" })] }), 12);
+	assert.doesNotMatch(detailRows(short.view.render(120))[0]!, /lines \d+–\d+ of/);
+
+	const tall = viewOf(longSnapshot(), 12);
+	assert.match(detailRows(tall.view.render(120))[0]!, AT_TOP, "the pane shows the range it is drawing, so scroll is discoverable");
+});
+
+test("pageup and pagedown move the description a page, ctrl+j and ctrl+k a row", () => {
+	// Twelve rows, three of chrome, and the detail header stays pinned: eight
+	// rows of description are one page.
+	const page = 12 - 3 - 1;
+	const { view } = viewOf(longSnapshot(), 12);
+	assert.match(detailRows(view.render(120))[0]!, AT_TOP);
+
+	view.handleInput("\u001b[6~");
+	assert.match(detailRows(view.render(120))[0]!, new RegExp(`lines ${page + 1}–${page * 2} of \\d+`), "one page is every description row the frame had");
+	view.handleInput("\u001b[5~");
+	assert.match(detailRows(view.render(120))[0]!, AT_TOP);
+	view.handleInput("\u001b[5~");
+	assert.match(detailRows(view.render(120))[0]!, AT_TOP, "the top is the top");
+
+	// ctrl+j arrives as a bare line feed and ctrl+k as a vertical tab.
+	view.handleInput("\n");
+	assert.match(detailRows(view.render(120))[0]!, /lines 2–9 of \d+/);
+	view.handleInput("\u000b");
+	assert.match(detailRows(view.render(120))[0]!, AT_TOP);
+});
+
+test("the description goes back to the top when the selection, the tab or the state changes", () => {
+	const { view } = viewOf(longSnapshot(), 12);
+	view.render(120);
+	view.handleInput("\u001b[6~");
+	assert.doesNotMatch(detailRows(view.render(120))[0]!, AT_TOP, "the description really moved");
+
+	view.handleInput("j");
+	assert.match(detailRows(view.render(120))[0]!, AT_TOP, "the next item starts at its own top");
+
+	view.handleInput("\u001b[6~");
+	view.handleInput("\t");
+	assert.match(detailRows(view.render(120))[0]!, AT_TOP, "the other tab starts at the top");
+
+	view.handleInput("\u001b[6~");
+	view.handleInput("s");
+	assert.match(detailRows(view.render(120))[0]!, AT_TOP, "a new state drops the scroll with the rows it belonged to");
+});
+
+test("an empty description says so instead of leaving the detail pane blank", () => {
+	const empty = viewOf(snapshot({ pullRequests: [pull(7, "no body here", { body: "" })] }));
+	assert.match(detailRows(empty.view.render(120)).join("\n"), /no description/i);
+
+	const blank = viewOf(snapshot({ pullRequests: [pull(7, "whitespace only", { body: " \n \n " })] }));
+	assert.match(detailRows(blank.view.render(120)).join("\n"), /no description/i, "whitespace is an empty description too");
+});
+
 test("the header names the tab on screen and that tab's state", () => {
 	const { view } = viewOf(snapshot({ prState: "merged", issueState: "closed" }));
 	assert.match(view.render(120)[0]!, /Gentleman-Programming\/gentle-shell/);
@@ -269,18 +412,21 @@ test("an empty repository says so, loading says loading, and a failure explains 
 test("the footer lists the keys the view actually handles, and fits the narrowest split", () => {
 	const { view } = viewOf(FULL);
 	const footer = view.render(120).at(-1)!;
-	for (const hint of ["esc", "tab/shift+tab", "j/k", "enter", "o", "y", "r", "s state"]) assert.ok(footer.includes(hint), `footer should mention ${hint}`);
+	for (const hint of ["esc", "tab/shift+tab", "j/k", "pgup/pgdn", "ctrl+j/k", "enter", "o", "y", "r", "s state"]) assert.ok(footer.includes(hint), `footer should mention ${hint}`);
 	// Nothing may be clipped away: at eighty columns the last hint still has its label.
 	assert.match(view.render(80).at(-1)!, /s state/);
+	for (const width of [50, 80, 120]) assert.doesNotMatch(view.render(width).at(-1)!, /…/, `the footer is clipped at ${width}`);
 });
 
 test("the view fills its height exactly and never paints a row wider than the terminal", () => {
-	for (const lines of [8, 12, 24]) {
-		const { view } = viewOf(FULL, lines);
-		for (const width of [20, 50, 80, 120]) {
-			const rendered = view.render(width);
-			assert.equal(rendered.length, Math.max(4, lines), `height at ${width}x${lines}`);
-			for (const line of rendered) assert.ok(visibleWidth(line) <= width, `over-wide row at ${width}: ${JSON.stringify(line)}`);
+	for (const value of [FULL, longSnapshot()]) {
+		for (const lines of [8, 12, 24]) {
+			const { view } = viewOf(value, lines);
+			for (const width of [20, 50, 80, 120]) {
+				const rendered = view.render(width);
+				assert.equal(rendered.length, Math.max(4, lines), `height at ${width}x${lines}`);
+				for (const line of rendered) assert.ok(visibleWidth(line) <= width, `over-wide row at ${width}: ${JSON.stringify(line)}`);
+			}
 		}
 	}
 });

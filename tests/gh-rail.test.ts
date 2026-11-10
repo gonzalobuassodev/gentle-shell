@@ -26,11 +26,11 @@ const taggedTheme = {
 } as never;
 
 function pull(number: number, title = `pull ${number}`): PullRequestSummary {
-	return { number, title, author: "someone", isDraft: false, headRefName: `feat/${number}`, updatedAt: "2026-11-10T09:00:00Z", labels: [], commentCount: 0, reviewDecision: null };
+	return { number, title, author: "someone", body: "", isDraft: false, headRefName: `feat/${number}`, updatedAt: "2026-11-10T09:00:00Z", labels: [], commentCount: 0, reviewDecision: null };
 }
 
 function issue(number: number, title = `issue ${number}`): IssueSummary {
-	return { number, title, author: "someone", labels: [], commentCount: 0, updatedAt: "2026-11-10T09:00:00Z" };
+	return { number, title, author: "someone", body: "", labels: [], commentCount: 0, updatedAt: "2026-11-10T09:00:00Z" };
 }
 
 function snapshot(over: Partial<GhSnapshot> = {}): GhSnapshot {

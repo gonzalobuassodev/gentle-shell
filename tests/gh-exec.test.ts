@@ -82,6 +82,7 @@ test("both lists are gh's stdout for the open work of that repository, parsed", 
 			number: 42,
 			title: "Add the GitHub pane",
 			author: "someone",
+			body: "",
 			isDraft: true,
 			headRefName: "feat/gh-pane",
 			updatedAt: "2026-11-10T09:00:00Z",
@@ -91,7 +92,7 @@ test("both lists are gh's stdout for the open work of that repository, parsed", 
 		},
 	]);
 	assert.deepEqual(await source.loadIssues(REPO, "open"), [
-		{ number: 3076, title: "GitHub pane", author: "someone", labels: [], commentCount: 2, updatedAt: "2026-11-10T08:00:00Z" },
+		{ number: 3076, title: "GitHub pane", author: "someone", body: "", labels: [], commentCount: 2, updatedAt: "2026-11-10T08:00:00Z" },
 	]);
 	// Argument vectors, not a command line: nothing is quoted or reinterpreted.
 	assert.deepEqual(calls, [

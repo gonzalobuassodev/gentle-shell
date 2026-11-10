@@ -351,7 +351,7 @@ Save `/gentle:mode default auto` or `/gentle:mode default yolo` to use either op
 | Safety boundaries | Guards around destructive operations and sensitive-path handling. |
 | Optional companion packages | Extra capabilities you may choose to add; persistent memory is **not** bundled with `gentle-pi`. |
 | Fullscreen workspace layout | Header row plus a scrolling Status → Changes → TODO rail on wide terminals. |
-| GitHub pane | The rail's **Github** section keeps the open pull request and issue counts with the newest of each, and `/gentle:gh` opens the full list in two tabs — pull requests and issues — with a detail pane; `tab` switches tabs, `s` cycles the active tab's state, `o` opens the selected one in your browser, read-only. [Details](docs/gentle-shell.md#github). |
+| GitHub pane | The rail's **Github** section keeps the open pull request and issue counts with the newest of each, and `/gentle:gh` opens the full list in two tabs — pull requests and issues — with a detail pane that carries the description; `tab` switches tabs, `s` cycles the active tab's state, `pageup`/`pagedown` and `ctrl+j`/`ctrl+k` scroll the description, `o` opens the selected one in your browser, read-only. [Details](docs/gentle-shell.md#github). |
 | Live status bar and prompt petal | One-line gauge, cost, and statuses; the petal shows `working` and `queued`. |
 | Parent ↔ subagent communication | Delegate, steer, reply, and cross-session notification within your local profile. |
 | Native interactive tools | Built-in questions, choices, and review captures — no third-party dependency. |

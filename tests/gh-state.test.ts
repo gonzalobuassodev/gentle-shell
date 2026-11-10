@@ -16,6 +16,7 @@ function pull(number: number): PullRequestSummary {
 		number,
 		title: `pr ${number}`,
 		author: "someone",
+		body: "",
 		isDraft: false,
 		headRefName: `feat/${number}`,
 		updatedAt: "2026-11-10T09:00:00Z",
@@ -26,7 +27,7 @@ function pull(number: number): PullRequestSummary {
 }
 
 function issue(number: number): IssueSummary {
-	return { number, title: `issue ${number}`, author: "someone", labels: [], commentCount: 0, updatedAt: "2026-11-10T09:00:00Z" };
+	return { number, title: `issue ${number}`, author: "someone", body: "", labels: [], commentCount: 0, updatedAt: "2026-11-10T09:00:00Z" };
 }
 
 interface Harness {

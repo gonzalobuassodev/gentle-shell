@@ -73,6 +73,7 @@ test("parsePullRequests maps the gh payload onto the pane model", () => {
 			labels: [{ name: "documentation" }, { name: "good first issue" }],
 			comments: [{ id: 1 }, { id: 2 }],
 			reviewDecision: "APPROVED",
+			body: "## What\n\nDonations go through GitHub Sponsors.",
 		},
 	]);
 	assert.deepEqual(parsePullRequests(json), [
@@ -80,6 +81,7 @@ test("parsePullRequests maps the gh payload onto the pane model", () => {
 			number: 2841,
 			title: "docs: state that donations go through GitHub Sponsors",
 			author: "doblas",
+			body: "## What\n\nDonations go through GitHub Sponsors.",
 			isDraft: false,
 			headRefName: "docs/donations",
 			updatedAt: "2026-11-10T09:00:00Z",
@@ -92,7 +94,7 @@ test("parsePullRequests maps the gh payload onto the pane model", () => {
 
 test("parsePullRequests survives the null fields gh really returns", () => {
 	const json = JSON.stringify([
-		{ number: 7, title: "no author", author: null, labels: null, comments: null, reviewDecision: null },
+		{ number: 7, title: "no author", author: null, labels: null, comments: null, reviewDecision: null, body: null },
 	]);
 	const [pull] = parsePullRequests(json);
 	assert.equal(pull.author, "ghost");
@@ -100,6 +102,16 @@ test("parsePullRequests survives the null fields gh really returns", () => {
 	assert.equal(pull.commentCount, 0);
 	assert.equal(pull.isDraft, false);
 	assert.equal(pull.reviewDecision, null);
+	assert.equal(pull.body, "", "gh reports an empty description as null, which is not an error");
+});
+
+test("a missing description is an empty body on both kinds, never a parse error", () => {
+	const [absent] = parsePullRequests(JSON.stringify([{ number: 1, title: "t" }]));
+	assert.equal(absent.body, "");
+	const [nullBody] = parseIssues(JSON.stringify([{ number: 2, title: "t", body: null }]));
+	assert.equal(nullBody.body, "");
+	const [described] = parseIssues(JSON.stringify([{ number: 3, title: "t", body: "what happens" }]));
+	assert.equal(described.body, "what happens");
 });
 
 test("parseIssues maps the gh payload and skips a label without a name", () => {
@@ -111,6 +123,7 @@ test("parseIssues maps the gh payload and skips a label without a name", () => {
 			labels: [{ name: "bug" }, { nope: true }],
 			comments: [{ id: 1 }],
 			updatedAt: "2026-11-09T12:00:00Z",
+			body: "Accepting an invitation answers the previous company.",
 		},
 	]);
 	assert.deepEqual(parseIssues(json), [
@@ -118,6 +131,7 @@ test("parseIssues maps the gh payload and skips a label without a name", () => {
 			number: 2801,
 			title: "[Bug]: accepting an invitation answers the previous company",
 			author: "someone",
+			body: "Accepting an invitation answers the previous company.",
 			labels: ["bug"],
 			commentCount: 1,
 			updatedAt: "2026-11-09T12:00:00Z",
@@ -145,7 +159,7 @@ test("the list arguments ask gh for exactly what the pane renders", () => {
 	assert.equal(prs[prs.indexOf("--state") + 1], "open");
 	assert.equal(prs[prs.indexOf("--limit") + 1], String(GITHUB_LIST_LIMIT));
 	const prFields = prs[prs.indexOf("--json") + 1].split(",");
-	for (const field of ["number", "title", "author", "isDraft", "headRefName", "updatedAt", "labels", "comments", "reviewDecision"]) {
+	for (const field of ["number", "title", "author", "isDraft", "headRefName", "updatedAt", "labels", "comments", "reviewDecision", "body"]) {
 		assert.ok(prFields.includes(field), `missing pull request field: ${field}`);
 	}
 
@@ -154,7 +168,7 @@ test("the list arguments ask gh for exactly what the pane renders", () => {
 	assert.equal(issues[issues.indexOf("--repo") + 1], "Gentleman-Programming/gentle-shell");
 	assert.equal(issues[issues.indexOf("--state") + 1], "open");
 	const issueFields = issues[issues.indexOf("--json") + 1].split(",");
-	for (const field of ["number", "title", "author", "labels", "comments", "updatedAt"]) {
+	for (const field of ["number", "title", "author", "labels", "comments", "updatedAt", "body"]) {
 		assert.ok(issueFields.includes(field), `missing issue field: ${field}`);
 	}
 });
