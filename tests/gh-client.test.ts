@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+	DEFAULT_GH_STATE,
 	GITHUB_LIST_LIMIT,
 	GhParseError,
+	ghCountLabel,
 	issueListArgs,
+	nextIssueState,
+	nextPrState,
 	parseIssues,
 	parsePullRequests,
 	parseRepoFromRemote,
 	prListArgs,
 	repoFullName,
+	type GhStateFilter,
+	type IssueStateFilter,
 } from "../lib/gh-client.ts";
 
 // The GitHub pane reads open pull requests and issues through the `gh` CLI, so
@@ -67,6 +73,7 @@ test("parsePullRequests maps the gh payload onto the pane model", () => {
 			labels: [{ name: "documentation" }, { name: "good first issue" }],
 			comments: [{ id: 1 }, { id: 2 }],
 			reviewDecision: "APPROVED",
+			body: "## What\n\nDonations go through GitHub Sponsors.",
 		},
 	]);
 	assert.deepEqual(parsePullRequests(json), [
@@ -74,6 +81,7 @@ test("parsePullRequests maps the gh payload onto the pane model", () => {
 			number: 2841,
 			title: "docs: state that donations go through GitHub Sponsors",
 			author: "doblas",
+			body: "## What\n\nDonations go through GitHub Sponsors.",
 			isDraft: false,
 			headRefName: "docs/donations",
 			updatedAt: "2026-11-10T09:00:00Z",
@@ -86,7 +94,7 @@ test("parsePullRequests maps the gh payload onto the pane model", () => {
 
 test("parsePullRequests survives the null fields gh really returns", () => {
 	const json = JSON.stringify([
-		{ number: 7, title: "no author", author: null, labels: null, comments: null, reviewDecision: null },
+		{ number: 7, title: "no author", author: null, labels: null, comments: null, reviewDecision: null, body: null },
 	]);
 	const [pull] = parsePullRequests(json);
 	assert.equal(pull.author, "ghost");
@@ -94,6 +102,16 @@ test("parsePullRequests survives the null fields gh really returns", () => {
 	assert.equal(pull.commentCount, 0);
 	assert.equal(pull.isDraft, false);
 	assert.equal(pull.reviewDecision, null);
+	assert.equal(pull.body, "", "gh reports an empty description as null, which is not an error");
+});
+
+test("a missing description is an empty body on both kinds, never a parse error", () => {
+	const [absent] = parsePullRequests(JSON.stringify([{ number: 1, title: "t" }]));
+	assert.equal(absent.body, "");
+	const [nullBody] = parseIssues(JSON.stringify([{ number: 2, title: "t", body: null }]));
+	assert.equal(nullBody.body, "");
+	const [described] = parseIssues(JSON.stringify([{ number: 3, title: "t", body: "what happens" }]));
+	assert.equal(described.body, "what happens");
 });
 
 test("parseIssues maps the gh payload and skips a label without a name", () => {
@@ -105,6 +123,7 @@ test("parseIssues maps the gh payload and skips a label without a name", () => {
 			labels: [{ name: "bug" }, { nope: true }],
 			comments: [{ id: 1 }],
 			updatedAt: "2026-11-09T12:00:00Z",
+			body: "Accepting an invitation answers the previous company.",
 		},
 	]);
 	assert.deepEqual(parseIssues(json), [
@@ -112,6 +131,7 @@ test("parseIssues maps the gh payload and skips a label without a name", () => {
 			number: 2801,
 			title: "[Bug]: accepting an invitation answers the previous company",
 			author: "someone",
+			body: "Accepting an invitation answers the previous company.",
 			labels: ["bug"],
 			commentCount: 1,
 			updatedAt: "2026-11-09T12:00:00Z",
@@ -133,22 +153,66 @@ test("malformed gh output is a GhParseError, never a silent empty list", () => {
 
 test("the list arguments ask gh for exactly what the pane renders", () => {
 	const repo = { host: "github.com", owner: "Gentleman-Programming", name: "gentle-shell" };
-	const prs = prListArgs(repo);
+	const prs = prListArgs(repo, "open");
 	assert.deepEqual(prs.slice(0, 2), ["pr", "list"]);
 	assert.equal(prs[prs.indexOf("--repo") + 1], "Gentleman-Programming/gentle-shell");
 	assert.equal(prs[prs.indexOf("--state") + 1], "open");
 	assert.equal(prs[prs.indexOf("--limit") + 1], String(GITHUB_LIST_LIMIT));
 	const prFields = prs[prs.indexOf("--json") + 1].split(",");
-	for (const field of ["number", "title", "author", "isDraft", "headRefName", "updatedAt", "labels", "comments", "reviewDecision"]) {
+	for (const field of ["number", "title", "author", "isDraft", "headRefName", "updatedAt", "labels", "comments", "reviewDecision", "body"]) {
 		assert.ok(prFields.includes(field), `missing pull request field: ${field}`);
 	}
 
-	const issues = issueListArgs(repo);
+	const issues = issueListArgs(repo, "open");
 	assert.deepEqual(issues.slice(0, 2), ["issue", "list"]);
 	assert.equal(issues[issues.indexOf("--repo") + 1], "Gentleman-Programming/gentle-shell");
 	assert.equal(issues[issues.indexOf("--state") + 1], "open");
 	const issueFields = issues[issues.indexOf("--json") + 1].split(",");
-	for (const field of ["number", "title", "author", "labels", "comments", "updatedAt"]) {
+	for (const field of ["number", "title", "author", "labels", "comments", "updatedAt", "body"]) {
 		assert.ok(issueFields.includes(field), `missing issue field: ${field}`);
 	}
+});
+
+test("the pane opens on open work and asks gh for whatever filter it is showing", () => {
+	const repo = { host: "github.com", owner: "Gentleman-Programming", name: "gentle-shell" };
+	assert.equal(DEFAULT_GH_STATE, "open");
+	for (const state of ["open", "closed", "merged", "all"] as GhStateFilter[]) {
+		assert.equal(prListArgs(repo, state)[prListArgs(repo, state).indexOf("--state") + 1], state);
+	}
+	for (const state of ["open", "closed", "all"] as IssueStateFilter[]) {
+		assert.equal(issueListArgs(repo, state)[issueListArgs(repo, state).indexOf("--state") + 1], state);
+	}
+});
+
+test("every issue state the cycle can hold is one gh accepts, and merged is not among them", () => {
+	const repo = { host: "github.com", owner: "Gentleman-Programming", name: "gentle-shell" };
+	let state = nextIssueState(DEFAULT_GH_STATE);
+	for (let step = 0; step < 3; step += 1) {
+		assert.ok(["open", "closed", "all"].includes(state), `issues were asked for ${state}`);
+		assert.equal(issueListArgs(repo, state)[issueListArgs(repo, state).indexOf("--state") + 1], state);
+		state = nextIssueState(state);
+	}
+	assert.equal(GITHUB_LIST_LIMIT, 30, "the filter must not buy extra rows");
+});
+
+test("a capped list says 30+ instead of claiming the page is the whole answer", () => {
+	assert.equal(ghCountLabel(0), "0");
+	assert.equal(ghCountLabel(1), "1");
+	assert.equal(ghCountLabel(GITHUB_LIST_LIMIT - 1), "29", "one row short of the cap is an exact count");
+	assert.equal(ghCountLabel(GITHUB_LIST_LIMIT), "30+", "a full page may be the head of a longer list");
+	assert.equal(ghCountLabel(GITHUB_LIST_LIMIT + 1), "30+", "the cap is what the pane can know");
+});
+
+test("the pull request cycle is open, closed, merged, all, and back to open", () => {
+	const seen: GhStateFilter[] = [DEFAULT_GH_STATE];
+	for (let step = 0; step < 4; step += 1) seen.push(nextPrState(seen[seen.length - 1]!));
+	assert.deepEqual(seen, ["open", "closed", "merged", "all", "open"]);
+});
+
+test("the issue cycle skips merged, because gh has no merged issue state", () => {
+	const seen: GhStateFilter[] = [DEFAULT_GH_STATE];
+	for (let step = 0; step < 3; step += 1) seen.push(nextIssueState(seen[seen.length - 1]!));
+	assert.deepEqual(seen, ["open", "closed", "all", "open"]);
+	// A state the issue cycle can never hold still advances instead of sticking.
+	assert.equal(nextIssueState("merged"), "open");
 });

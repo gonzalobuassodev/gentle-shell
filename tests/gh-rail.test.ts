@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { GITHUB_COMMAND, GithubRail } from "../lib/gh-rail.ts";
-import { GH_TTL_MS, type GhSnapshot } from "../lib/gh-state.ts";
+import { GH_TTL_MS, GhStore, type GhSnapshot } from "../lib/gh-state.ts";
+import { GITHUB_LIST_LIMIT } from "../lib/gh-client.ts";
 import { renderPanelSheet } from "../lib/shell-panel.ts";
 import type { GithubRepo, IssueSummary, PullRequestSummary } from "../lib/gh-client.ts";
 
@@ -25,20 +26,20 @@ const taggedTheme = {
 } as never;
 
 function pull(number: number, title = `pull ${number}`): PullRequestSummary {
-	return { number, title, author: "someone", isDraft: false, headRefName: `feat/${number}`, updatedAt: "2026-11-10T09:00:00Z", labels: [], commentCount: 0, reviewDecision: null };
+	return { number, title, author: "someone", body: "", isDraft: false, headRefName: `feat/${number}`, updatedAt: "2026-11-10T09:00:00Z", labels: [], commentCount: 0, reviewDecision: null };
 }
 
 function issue(number: number, title = `issue ${number}`): IssueSummary {
-	return { number, title, author: "someone", labels: [], commentCount: 0, updatedAt: "2026-11-10T09:00:00Z" };
+	return { number, title, author: "someone", body: "", labels: [], commentCount: 0, updatedAt: "2026-11-10T09:00:00Z" };
 }
 
 function snapshot(over: Partial<GhSnapshot> = {}): GhSnapshot {
-	return { repo: REPO, pullRequests: [], issues: [], status: "ready", error: null, loadedAt: 1_000_000, version: 1, ...over };
+	return { repo: REPO, prState: "open", issueState: "open", pullRequests: [], issues: [], status: "ready", error: null, loadedAt: 1_000_000, version: 1, ...over };
 }
 
 function railOf(snapshotValue: GhSnapshot | (() => GhSnapshot), over: { open?: () => void } = {}) {
 	const current = typeof snapshotValue === "function" ? snapshotValue : () => snapshotValue;
-	return new GithubRail({ theme: plainTheme, snapshot: current, now: () => 1_000_000, ...over });
+	return new GithubRail({ theme: plainTheme, openSnapshot: current, now: () => 1_000_000, ...over });
 }
 
 test("the header carries both counts and the section opens with its command", () => {
@@ -57,6 +58,16 @@ test("the two most recent items are what the section shows", () => {
 	assert.match(text, /docs: donations/);
 	assert.match(text, /#2801/);
 	assert.doesNotMatch(text, /#2839/, "the list is a digest, not a copy of the overlay");
+});
+
+test("a capped count says so, so the rail cannot claim to hold every open item", () => {
+	const capped = snapshot({
+		pullRequests: Array.from({ length: GITHUB_LIST_LIMIT }, (_, index) => pull(index + 1)),
+		issues: [issue(10)],
+	});
+	const header = railOf(capped).render(50)[0]!;
+	assert.match(header, new RegExp(`${GITHUB_LIST_LIMIT}\\+`), "a full list is a floor, not a total");
+	assert.match(header, /· 1$/, "an exact count stays exact");
 });
 
 test("nothing open says so instead of painting an empty section", () => {
@@ -139,6 +150,29 @@ test("the section is one of the panels /gentle:panel shows", () => {
 test("the sheet omits the section when nothing is registered under its key", () => {
 	const sheet = renderPanelSheet(new Map(), taggedTheme, 60, { rows: 6, scrollTop: 0 });
 	assert.doesNotMatch(sheet.lines.join("\n"), /GITHUB/);
+});
+
+test("the section keeps reporting open work while the pane's tabs sit on other states", async () => {
+	const store = new GhStore({
+		now: () => 1_000_000,
+		resolveRepo: () => REPO,
+		loadPullRequests: async (_repo, state) => (state === "open" ? [pull(1), pull(2)] : [pull(400), pull(401), pull(402)]),
+		loadIssues: async (_repo, state) => (state === "open" ? [issue(10)] : [issue(500)]),
+		onChange: () => {},
+	});
+	await store.refresh();
+	await store.cycleState("pr");
+	await store.cycleState("pr");
+	await store.cycleState("issue");
+	assert.equal(store.snapshot().prState, "merged", "the pane moved off open work");
+	assert.equal(store.snapshot().issueState, "closed");
+
+	const rail = railOf(() => store.openSnapshot());
+	const text = rail.render(50).join("\n");
+	assert.match(text, /2 · 1/, "the counts are still the open ones");
+	assert.equal(rail.summary()?.right, "2·1");
+	assert.doesNotMatch(text, /#400/, "the rail is a digest of open work, not of a filtered tab");
+	assert.doesNotMatch(text, /#500/);
 });
 
 test("the TTL the rail ages against is the store's own", () => {

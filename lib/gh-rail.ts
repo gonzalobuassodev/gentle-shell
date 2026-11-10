@@ -1,8 +1,11 @@
 // Gentle Shell GitHub section: the rail's one-glance view of what is open.
-// It renders from the store's snapshot and never fetches, so a repaint here is
-// free and the section keeps the last good rows when a refresh fails.
+// It renders from the store's open snapshot and never fetches, so a repaint here
+// is free and the section keeps the last good rows when a refresh fails. The
+// overlay's state filter never reaches it: this section is what is open now, and
+// a closed or merged count would answer a question nobody asked the rail.
 
 import { ghCounts, ghDigest, type GhSnapshot } from "./gh-state.ts";
+import { ghCountLabel } from "./gh-client.ts";
 import { renderPanelHeader, renderPanelRow, type PanelSummary, type PanelTheme } from "./shell-panel.ts";
 import type { SidebarRail } from "./shell-sidebar.ts";
 
@@ -17,7 +20,8 @@ const UNAVAILABLE = "gh unavailable";
 
 export interface GithubRailDeps {
 	theme: PanelTheme;
-	snapshot(): GhSnapshot;
+	/** Always the store's open snapshot: the section digests what is open right now. */
+	openSnapshot(): GhSnapshot;
 	now(): number;
 	open?(): void;
 }
@@ -33,13 +37,13 @@ export class GithubRail implements SidebarRail {
 	}
 
 	render(width: number): string[] {
-		const snapshot = this.deps.snapshot();
+		const snapshot = this.deps.openSnapshot();
 		const counts = ghCounts(snapshot);
 		const theme = this.deps.theme;
 		const rows = [
 			renderPanelHeader(theme, width, {
 				title: GITHUB_SECTION_TITLE,
-				count: `${counts.pullRequests} · ${counts.issues}`,
+				count: `${ghCountLabel(counts.pullRequests)} · ${ghCountLabel(counts.issues)}`,
 				open: true,
 			}),
 		];
@@ -60,11 +64,11 @@ export class GithubRail implements SidebarRail {
 	}
 
 	digest(): string {
-		return ghDigest(this.deps.snapshot(), this.deps.now());
+		return ghDigest(this.deps.openSnapshot(), this.deps.now());
 	}
 
 	summary(): PanelSummary | undefined {
-		const counts = ghCounts(this.deps.snapshot());
+		const counts = ghCounts(this.deps.openSnapshot());
 		const right = `${counts.pullRequests}·${counts.issues}`;
 		return { left: GITHUB_SECTION_TITLE.toLowerCase(), right, rightLabel: "open", priority: 0 };
 	}
