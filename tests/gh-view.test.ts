@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { GhView, ghEntries, ghItemUrl, ghViewLayout, type GhEntryKind, type GhViewDeps, type GhViewTheme } from "../lib/gh-view.ts";
+import { GhView, PANE_SEPARATOR, ghEntries, ghItemUrl, ghViewLayout, type GhEntryKind, type GhViewDeps, type GhViewTheme } from "../lib/gh-view.ts";
 import type { GhSnapshot } from "../lib/gh-state.ts";
 import { nextIssueState, nextPrState, type GithubRepo, type IssueSummary, type PullRequestSummary } from "../lib/gh-client.ts";
 
@@ -289,7 +289,15 @@ test("a wide terminal splits into a list and a detail pane", () => {
 	const layout = ghViewLayout(140);
 	assert.equal(layout.mode, "split");
 	assert.ok(layout.listWidth >= 24 && layout.listWidth <= 44, `list width ${layout.listWidth}`);
-	assert.equal(layout.listWidth + layout.detailWidth + 1, 140, "one column between the panes");
+	assert.equal(layout.listWidth + layout.detailWidth + PANE_SEPARATOR.length, 140, "the gutter is counted inside the terminal width");
+});
+
+test("the two panes are separated by a three-column rule, so the list has an edge", () => {
+	assert.equal(PANE_SEPARATOR, " │ ");
+	const { view } = viewOf(FULL);
+	const body = view.render(120).slice(1, -1);
+	assert.ok(body.some((row) => row.includes(PANE_SEPARATOR)), "the gutter is painted between the panes");
+	for (const row of body) assert.equal(visibleWidth(row), 120, "the gutter is inside the terminal width, not on top of it");
 });
 
 test("a narrow terminal shows the list alone instead of two unreadable columns", () => {

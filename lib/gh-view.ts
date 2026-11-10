@@ -51,7 +51,9 @@ export const GH_LIST_MIN_WIDTH = 24;
 export const GH_LIST_MAX_WIDTH = 44;
 // Header, tab row, footer: the list and the detail pane share what is left.
 const CHROME_ROWS = 3;
-const SEPARATOR = " ";
+// Three columns, not one: a bare gap leaves the eye to guess where the list
+// stops and the detail starts. The rule is painted with the dim role in body().
+export const PANE_SEPARATOR = " │ ";
 const TAB_SEPARATOR = "│";
 const SELECTED = "▸";
 const UNSELECTED = " ";
@@ -106,7 +108,7 @@ export function ghViewLayout(width: number): GhViewLayout {
 	const target = Math.max(0, Math.floor(width));
 	if (target < GH_SPLIT_MIN_WIDTH) return { mode: "list", listWidth: target, detailWidth: 0 };
 	const listWidth = Math.min(GH_LIST_MAX_WIDTH, Math.max(GH_LIST_MIN_WIDTH, Math.round(target * 0.4)));
-	return { mode: "split", listWidth, detailWidth: Math.max(0, target - listWidth - SEPARATOR.length) };
+	return { mode: "split", listWidth, detailWidth: Math.max(0, target - listWidth - PANE_SEPARATOR.length) };
 }
 
 export class GhView {
@@ -264,7 +266,7 @@ export class GhView {
 		const list = this.listRows(entries, selected, layout.listWidth, rows);
 		if (layout.mode === "list") return list.map((row) => fitPanelLine(row, "", width));
 		const detail = this.detailRows(entries[selected]!, layout.detailWidth, rows);
-		return list.map((row, index) => `${fitPanelLine(row, "", layout.listWidth)}${SEPARATOR}${fitPanelLine(detail[index] ?? "", "", layout.detailWidth)}`);
+		return list.map((row, index) => `${fitPanelLine(row, "", layout.listWidth)}${this.deps.theme.fg("dim", PANE_SEPARATOR)}${fitPanelLine(detail[index] ?? "", "", layout.detailWidth)}`);
 	}
 
 	private emptyBody(snapshot: GhSnapshot, width: number, rows: number): string[] {
